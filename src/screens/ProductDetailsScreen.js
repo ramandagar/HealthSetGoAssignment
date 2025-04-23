@@ -1,8 +1,8 @@
-import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity, Dimensions, FlatList } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
-import { fetchProductById } from '../redux/slices/productsSlice';
-import { addToCart } from '../redux/slices/cartSlice';
+import { fetchProductById, fetchAllProducts } from '../redux/slices/productsSlice';
+import { addToCart, decreaseQuantity } from '../redux/slices/cartSlice';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Icon from 'react-native-vector-icons/Ionicons';
@@ -13,11 +13,36 @@ const { width } = Dimensions.get('window');
 const ProductDetailsScreen = ({ route, navigation }) => {
   const { productId } = route.params;
   const dispatch = useDispatch();
-  const { selectedProduct, loading, error } = useSelector(state => state.products);
+  const { selectedProduct, items, loading, error } = useSelector(state => state.products);
+  const cart = useSelector(state => state.cart.items);
   const cartItemsCount = useSelector(state => state.cart.totalItems) || 0;
+  const [similarProducts, setSimilarProducts] = useState([]);
+  
   useEffect(() => {
     dispatch(fetchProductById(productId));
-  }, [dispatch, productId]);
+    if (items.length === 0) {
+      dispatch(fetchAllProducts());
+    }
+  }, [dispatch, productId, items.length]);
+  
+  useEffect(() => {
+    if (selectedProduct && items.length > 0) {
+      // Find similar products (same category, excluding current product)
+      const similar = items
+        .filter(item => 
+          item.category === selectedProduct.category && 
+          item.id !== selectedProduct.id
+        )
+        .slice(0, 4); // Limit to 4 similar products
+      
+      setSimilarProducts(similar);
+    }
+  }, [selectedProduct, items]);
+  
+  const getItemQuantity = (productId) => {
+    const cartItem = cart.find(item => item.id === productId);
+    return cartItem ? cartItem.quantity : 0;
+  };
   
   const handleAddToCart = () => {
     if (selectedProduct) {
@@ -25,6 +50,32 @@ const ProductDetailsScreen = ({ route, navigation }) => {
       showAddToCartToast(selectedProduct);
     }
   };
+  
+  const handleDecreaseQuantity = () => {
+    if (selectedProduct) {
+      dispatch(decreaseQuantity(selectedProduct.id));
+    }
+  };
+
+  const handleSimilarProductPress = (product) => {
+    navigation.push('ProductDetails', { productId: product.id });
+  };
+  
+  const renderSimilarProductItem = ({ item }) => (
+    <TouchableOpacity 
+      style={styles.similarProductItem}
+      onPress={() => handleSimilarProductPress(item)}
+      activeOpacity={0.8}
+    >
+      <Image 
+        source={{ uri: item.image }} 
+        style={styles.similarProductImage}
+        resizeMode="contain"
+      />
+      <Text style={styles.similarProductTitle} numberOfLines={2}>{item.title}</Text>
+      <Text style={styles.similarProductPrice}>${item.price.toFixed(2)}</Text>
+    </TouchableOpacity>
+  );
   
   if (loading && !selectedProduct) {
     return <LoadingSpinner loading={true} fullscreen text="Loading product details..." />;
@@ -46,6 +97,7 @@ const ProductDetailsScreen = ({ route, navigation }) => {
   }
   
   const { title, price, description, category, image, rating } = selectedProduct;
+  const quantity = getItemQuantity(selectedProduct.id);
   
   return (
     <View style={styles.container}>
@@ -106,15 +158,62 @@ const ProductDetailsScreen = ({ route, navigation }) => {
           
           <Text style={styles.sectionTitle}>Description</Text>
           <Text style={styles.description}>{description}</Text>
+          
+          {similarProducts.length > 0 && (
+            <>
+              <View style={styles.divider} />
+              <View style={styles.similarProductsContainer}>
+                <Text style={styles.sectionTitle}>Similar Products</Text>
+                <FlatList
+                  data={similarProducts}
+                  keyExtractor={(item) => item.id.toString()}
+                  renderItem={renderSimilarProductItem}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.similarProductsList}
+                />
+              </View>
+            </>
+          )}
         </View>
       </ScrollView>
       
       <View style={styles.footer}>
-        <Button
-          title="Add to Cart"
-          onPress={handleAddToCart}
-          style={styles.addButton}
-        />
+        {quantity > 0 ? (
+          <View style={styles.quantityFooterContainer}>
+            <View style={styles.quantityContainer}>
+              <TouchableOpacity 
+                style={styles.quantityButton}
+                onPress={handleDecreaseQuantity}
+              >
+                <Icon name="remove-circle" size={28} color="#e74c3c" />
+              </TouchableOpacity>
+              
+              <Text style={styles.quantityText}>{quantity}</Text>
+              
+              <TouchableOpacity 
+                style={styles.quantityButton}
+                onPress={handleAddToCart}
+              >
+                <Icon name="add-circle" size={28} color="#3498db" />
+              </TouchableOpacity>
+            </View>
+            
+            <TouchableOpacity 
+              style={styles.viewCartButton}
+              onPress={() => navigation.navigate('Cart')}
+            >
+              <Text style={styles.viewCartText}>View Cart</Text>
+              <Icon name="arrow-forward" size={20} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <Button
+            title="Add to Cart"
+            onPress={handleAddToCart}
+            style={styles.addButton}
+          />
+        )}
       </View>
       
       <LoadingSpinner loading={loading} />
@@ -262,6 +361,82 @@ const styles = StyleSheet.create({
   },
   addButton: {
     width: '100%',
+  },
+  quantityFooterContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  quantityContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  quantityButton: {
+    padding: 4,
+  },
+  quantityText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginHorizontal: 16,
+  },
+  viewCartButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3498db',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flex: 1,
+    marginLeft: 16,
+  },
+  viewCartText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    marginRight: 8,
+  },
+  similarProductsContainer: {
+    marginTop: 8,
+  },
+  similarProductsList: {
+    paddingVertical: 16,
+  },
+  similarProductItem: {
+    width: 140,
+    marginRight: 16,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  similarProductImage: {
+    width: '100%',
+    height: 100,
+    marginBottom: 8,
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+  },
+  similarProductTitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#334155',
+    marginBottom: 4,
+    height: 40,
+  },
+  similarProductPrice: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
   },
   errorContainer: {
     flex: 1,

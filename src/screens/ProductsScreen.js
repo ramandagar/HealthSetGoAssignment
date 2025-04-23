@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, FlatList, Text, TouchableOpacity, SafeAreaView, Dimensions, Image, Platform } from 'react-native';
+import { View, StyleSheet, FlatList, Text, TouchableOpacity, SafeAreaView, Dimensions, Image, Platform, TextInput } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchAllProducts } from '../redux/slices/productsSlice';
-import { addToCart } from '../redux/slices/cartSlice';
+import { addToCart, decreaseQuantity } from '../redux/slices/cartSlice';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { showAddToCartToast } from '../utils/Helper';
@@ -13,10 +13,13 @@ const { width } = Dimensions.get('window');
 const ProductsScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const { items, loading, error } = useSelector(state => state.products);
+  const cart = useSelector(state => state.cart.items);
   const cartItemsCount = useSelector(state => state.cart.totalItems) || 0;
   const [displayedItems, setDisplayedItems] = useState([]);
   const [page, setPage] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filteredItems, setFilteredItems] = useState([]);
   
   useEffect(() => {
     dispatch(fetchAllProducts());
@@ -24,9 +27,17 @@ const ProductsScreen = ({ navigation }) => {
   
   useEffect(() => {
     if (items.length > 0) {
-      setDisplayedItems(items.slice(0, page * ITEMS_PER_PAGE));
+      const filtered = searchQuery.trim() 
+        ? items.filter(item => 
+            item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            item.category.toLowerCase().includes(searchQuery.toLowerCase())
+          )
+        : items;
+      
+      setFilteredItems(filtered);
+      setDisplayedItems(filtered.slice(0, page * ITEMS_PER_PAGE));
     }
-  }, [items, page]);
+  }, [items, page, searchQuery]);
   
   const handleProductPress = (product) => {
     navigation.navigate('ProductDetails', { productId: product.id });
@@ -37,8 +48,17 @@ const ProductsScreen = ({ navigation }) => {
     showAddToCartToast(product);
   };
   
+  const handleDecreaseQuantity = (product) => {
+    dispatch(decreaseQuantity(product.id));
+  };
+  
+  const getItemQuantity = (productId) => {
+    const cartItem = cart.find(item => item.id === productId);
+    return cartItem ? cartItem.quantity : 0;
+  };
+  
   const loadMoreItems = () => {
-    if (loadingMore || displayedItems.length >= items.length) return;
+    if (loadingMore || displayedItems.length >= filteredItems.length) return;
     
     setLoadingMore(true);
     setTimeout(() => {
@@ -56,6 +76,7 @@ const ProductsScreen = ({ navigation }) => {
     // Safety check for item properties
     const title = item?.title || '';
     const price = item?.price ? parseFloat(item.price).toFixed(2) : '0.00';
+    const quantity = getItemQuantity(item.id);
     
     return (
       <TouchableOpacity 
@@ -72,13 +93,43 @@ const ProductsScreen = ({ navigation }) => {
           <View style={styles.productInfo}>
             <Text style={styles.productTitle} numberOfLines={2}>{title}</Text>
             <Text style={styles.productPrice}>${price}</Text>
-            <TouchableOpacity 
-              style={styles.addButton}
-              onPress={() => handleAddToCart(item)}
-            >
-              <Icon name="add-circle" size={24} color="#3498db" />
-              <Text style={styles.addButtonText}>Add</Text>
-            </TouchableOpacity>
+            
+            {quantity > 0 ? (
+              <View style={styles.quantityContainer}>
+                <TouchableOpacity 
+                  style={styles.quantityButton}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    handleDecreaseQuantity(item);
+                  }}
+                >
+                  <Icon name="remove-circle" size={24} color="#e74c3c" />
+                </TouchableOpacity>
+                
+                <Text style={styles.quantityText}>{quantity}</Text>
+                
+                <TouchableOpacity 
+                  style={styles.quantityButton}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    handleAddToCart(item);
+                  }}
+                >
+                  <Icon name="add-circle" size={24} color="#3498db" />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity 
+                style={styles.addButton}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  handleAddToCart(item);
+                }}
+              >
+                <Icon name="add-circle" size={24} color="#3498db" />
+                <Text style={styles.addButtonText}>Add</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </TouchableOpacity>
@@ -103,6 +154,25 @@ const ProductsScreen = ({ navigation }) => {
               </View>
             </View>
           </TouchableOpacity>
+        </View>
+        
+        <View style={styles.searchContainer}>
+          <Icon name="search-outline" size={20} color="#64748b" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search products or categories..."
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            clearButtonMode="while-editing"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity
+              style={styles.clearButton}
+              onPress={() => setSearchQuery('')}
+            >
+              <Icon name="close-circle" size={18} color="#64748b" />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     );
@@ -134,7 +204,11 @@ const ProductsScreen = ({ navigation }) => {
         contentContainerStyle={styles.productsList}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
-          <Text style={styles.emptyText}>No products found</Text>
+          <Text style={styles.emptyText}>
+            {searchQuery.length > 0 
+              ? `No products found matching "${searchQuery}"` 
+              : 'No products found'}
+          </Text>
         }
         onEndReached={loadMoreItems}
         onEndReachedThreshold={0.5}
@@ -152,7 +226,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
-    marginTop:50
+    marginTop: 50
   },
   header: {
     padding: 16,
@@ -168,11 +242,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 16,
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#0f172a',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 40,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    height: '100%',
+    fontSize: 14,
+    color: '#0f172a',
+  },
+  clearButton: {
+    padding: 4,
   },
   cartButton: {
     padding: 8,
@@ -248,18 +343,31 @@ const styles = StyleSheet.create({
   },
   addButtonText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#3498db',
     marginLeft: 4,
   },
-  loadingMore: {
-    paddingVertical: 20,
+  quantityContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 6,
+  },
+  quantityButton: {
+    padding: 4,
+  },
+  quantityText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0f172a',
   },
   emptyText: {
     textAlign: 'center',
-    marginTop: 48,
     fontSize: 16,
     color: '#64748b',
+    marginTop: 24,
   },
   errorContainer: {
     flex: 1,
@@ -277,6 +385,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#3498db',
     fontWeight: '600',
+  },
+  loadingMore: {
+    marginVertical: 16,
   },
 });
 
